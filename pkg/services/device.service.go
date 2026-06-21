@@ -53,13 +53,11 @@ func (d *DeviceServiceImpl) GetDevicesByUserID(ctx context.Context, userID uuid.
 }
 
 // UpdateLastSeenAt implements [DeviceService].
+//
+// Previously this built a near-empty domain.Device{ID, LastSeenAt} and
+// called Save() on it, which performs a full-row UPDATE — silently wiping
+// UserID/DeviceName/Platform back to zero values on every heartbeat. It
+// now updates only the last_seen_at column via the repository.
 func (d *DeviceServiceImpl) UpdateLastSeenAt(ctx context.Context, id uuid.UUID) error {
-	err := d.DeviceRepo.Update(ctx, &domain.Device{
-		ID:         id,
-		LastSeenAt: time.Now(),
-	})
-	if err != nil {
-		return err
-	}
-	return nil
+	return d.DeviceRepo.UpdateLastSeenAt(ctx, id, time.Now())
 }

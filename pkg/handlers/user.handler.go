@@ -12,6 +12,7 @@ type UserHandler interface {
 	RegisterUser(c fiber.Ctx) error
 	GetUserByEmail(c fiber.Ctx) error
 	GetUserByID(c fiber.Ctx) error
+	UpdateUser(c fiber.Ctx) error
 }
 
 type UserHandlerImpl struct {
@@ -27,7 +28,7 @@ func InitUserHandler(userService services.UserService) UserHandler {
 // GetUserByEmail implements [UserHandler].
 func (u *UserHandlerImpl) GetUserByEmail(c fiber.Ctx) error {
 	userEmail := c.Params("email")
-	user, err := u.UserService.GetUserByEmail(c, userEmail)
+	user, err := u.UserService.GetUserByEmail(c.Context(), userEmail)
 	if err != nil {
 		return err
 	}
@@ -43,7 +44,7 @@ func (u *UserHandlerImpl) GetUserByEmail(c fiber.Ctx) error {
 // GetUserByID implements [UserHandler].
 func (u *UserHandlerImpl) GetUserByID(c fiber.Ctx) error {
 	userID := c.Params("id")
-	uuid, err := uuid.Parse(userID)
+	id, err := uuid.Parse(userID)
 	if err != nil {
 		return utils.ResponseBadRequest(c, []utils.ValidationError{
 			{
@@ -52,7 +53,7 @@ func (u *UserHandlerImpl) GetUserByID(c fiber.Ctx) error {
 			},
 		})
 	}
-	user, err := u.UserService.GetUserByID(c, uuid)
+	user, err := u.UserService.GetUserByID(c.Context(), id)
 	if err != nil {
 		return err
 	}
@@ -73,8 +74,37 @@ func (u *UserHandlerImpl) RegisterUser(c fiber.Ctx) error {
 	if errs := utils.ValidateStruct(req); len(errs) > 0 {
 		return utils.ResponseBadRequest(c, errs)
 	}
-	if err := u.UserService.CreateUser(c, req); err != nil {
+	if err := u.UserService.CreateUser(c.Context(), req); err != nil {
 		return err
 	}
-	return utils.ResponseCreated(c, "User created successfully")
+	return utils.ResponseCreated(c, "user")
+}
+
+// UpdateUser implements [UserHandler].
+func (u *UserHandlerImpl) UpdateUser(c fiber.Ctx) error {
+	userID := c.Params("id")
+	id, err := uuid.Parse(userID)
+	if err != nil {
+		return utils.ResponseBadRequest(c, []utils.ValidationError{
+			{
+				Field:   "id",
+				Message: "Invalid user ID format",
+			},
+		})
+	}
+
+	var req dto.UpdateUserRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return err
+	}
+	req.ID = id
+
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return utils.ResponseBadRequest(c, errs)
+	}
+
+	if err := u.UserService.UpdateUser(c.Context(), req); err != nil {
+		return err
+	}
+	return utils.ResponseEdited(c, "user", "edited")
 }

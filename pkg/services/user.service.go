@@ -1,9 +1,9 @@
 package services
 
 import (
+	"context"
 	"time"
 
-	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/domain"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/dto"
@@ -11,10 +11,10 @@ import (
 )
 
 type UserService interface {
-	CreateUser(c fiber.Ctx, req dto.CreateUserRequest) error
-	GetUserByEmail(c fiber.Ctx, email string) (*domain.User, error)
-	GetUserByID(c fiber.Ctx, id uuid.UUID) (*domain.User, error)
-	UpdateUser(c fiber.Ctx, req dto.UpdateUserRequest) error
+	CreateUser(ctx context.Context, req dto.CreateUserRequest) error
+	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (*domain.User, error)
+	UpdateUser(ctx context.Context, req dto.UpdateUserRequest) error
 }
 
 type UserServiceImpl struct {
@@ -32,19 +32,17 @@ func InitUserService(userRepositories repositories.UserRepository, userSettingsS
 // IMPLEMENTATION
 
 // CreateUser implements [UserService].
-func (u *UserServiceImpl) CreateUser(c fiber.Ctx, req dto.CreateUserRequest) error {
-	uuid := uuid.New()
-	if err := u.UserRepositories.Create(c, &domain.User{
-		ID:        uuid,
-		Email:     req.Email,
-		Name:      req.Name,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}); err != nil {
+func (u *UserServiceImpl) CreateUser(ctx context.Context, req dto.CreateUserRequest) error {
+	newUser := &domain.User{
+		ID:    uuid.New(),
+		Email: req.Email,
+		Name:  req.Name,
+	}
+	if err := u.UserRepositories.Create(ctx, newUser); err != nil {
 		return err
 	}
 
-	if err := u.UserSettingsService.SetDefaultUserSettings(c, uuid); err != nil {
+	if err := u.UserSettingsService.SetDefaultUserSettings(ctx, newUser.ID); err != nil {
 		return err
 	}
 
@@ -52,21 +50,35 @@ func (u *UserServiceImpl) CreateUser(c fiber.Ctx, req dto.CreateUserRequest) err
 }
 
 // GetUserByEmail implements [UserService].
-func (u *UserServiceImpl) GetUserByEmail(c fiber.Ctx, email string) (*domain.User, error) {
-	return u.UserRepositories.GetByEmail(c, email)
+func (u *UserServiceImpl) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
+	return u.UserRepositories.GetByEmail(ctx, email)
 }
 
 // GetUserByID implements [UserService].
-func (u *UserServiceImpl) GetUserByID(c fiber.Ctx, id uuid.UUID) (*domain.User, error) {
-	return u.UserRepositories.GetByID(c, id)
+func (u *UserServiceImpl) GetUserByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
+	return u.UserRepositories.GetByID(ctx, id)
 }
 
 // UpdateUser implements [UserService].
-func (u *UserServiceImpl) UpdateUser(c fiber.Ctx, req dto.UpdateUserRequest) error {
-	return u.UserRepositories.Update(c, &domain.User{
-		ID:        req.ID,
-		Email:     req.Email,
-		Name:      req.Name,
-		UpdatedAt: time.Now(),
-	})
+//
+// This performs a partial update: only non-empty fields in the request
+// overwrite the stored record. The previous implementation built a brand
+// new domain.User from the request and Save()'d it directly, which would
+// silently null out CreatedAt and any field the caller didn't (or
+// couldn't, since DTO fields aren't pointers) send.
+func (u *UserServiceImpl) UpdateUser(ctx context.Context, req dto.UpdateUserRequest) error {
+	existing, err := u.UserRepositories.GetByID(ctx, req.ID)
+	if err != nil {
+		return err
+	}
+
+	if req.Email != "" {
+		existing.Email = req.Email
+	}
+	if req.Name != "" {
+		existing.Name = req.Name
+	}
+	existing.UpdatedAt = time.Now()
+
+	return u.UserRepositories.Update(ctx, existing)
 }

@@ -1,77 +1,172 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/krisnaganesha1609/LeviathanBolu-BE/docs"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/configs"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/database"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/handlers"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/repositories"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/routes"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/services"
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
-var router routes.Routes
-
-func init() {
-	fmt.Println("Starting LeviathanBolu Orchestrator...")
+// bootstrap wires config, infrastructure connections, repositories,
+// services and handlers together, returning the assembled route table
+// plus the raw connections so main() can manage their lifecycle (health
+// probes + graceful shutdown).
+//
+// This used to live in an init() function. init() runs implicitly before
+// main() — including before any `go test` in this package — so a real
+// database connection (with log.Fatalf on failure) was firing during
+// tooling/test runs too. Doing it explicitly inside main() keeps that
+// side effect where it belongs.
+func bootstrap() (routes.Routes, *configs.OrchestratorConfig, *gorm.DB, *redis.Client) {
 	cfg, err := configs.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatalf("failed to load config: %v", err)
 	}
 
 	db := database.ConnectPostgres(cfg)
 	database.MigratePostgres(db)
+	rdb := database.ConnectRedis(cfg)
 
-	// Init Repositories
-
+	// Repositories
 	userRepo := repositories.InitUserRepository(db)
 	deviceRepo := repositories.InitDeviceRepository(db)
 	userSettingsRepo := repositories.InitUserSettingsRepository(db)
 
-	// Init Services
+	// Services
 	userSettingsService := services.InitUserSettingsService(userSettingsRepo)
 	userService := services.InitUserService(userRepo, userSettingsService)
 	deviceService := services.InitDeviceService(deviceRepo)
 
-	// Store services in app context for handlers to use
+	// Handlers
 	userHandlers := handlers.InitUserHandler(userService)
 	deviceHandlers := handlers.InitDeviceHandler(deviceService)
 	userSettingsHandlers := handlers.InitUserSettingsHandler(userSettingsService)
 
-	router = routes.Routes{
+	router := routes.Routes{
 		UserHandler:         userHandlers,
 		DeviceHandler:       deviceHandlers,
 		UserSettingsHandler: userSettingsHandlers,
+		ReadinessProbe:      readinessProbe(db, rdb),
+	}
+
+	return router, cfg, db, rdb
+}
+
+// readinessProbe pings Postgres and Redis with a short timeout so
+// /readyz reflects whether the app can actually serve requests, not just
+// whether the HTTP server happens to be up.
+func readinessProbe(db *gorm.DB, rdb *redis.Client) func(c fiber.Ctx) bool {
+	return func(c fiber.Ctx) bool {
+		ctx, cancel := context.WithTimeout(c.Context(), 2*time.Second)
+		defer cancel()
+
+		sqlDB, err := db.DB()
+		if err != nil || sqlDB.PingContext(ctx) != nil {
+			return false
+		}
+		if rdb.Ping(ctx).Err() != nil {
+			return false
+		}
+		return true
 	}
 }
 
 func main() {
+	fmt.Println("Starting LeviathanBolu Orchestrator...")
+	router, cfg, db, rdb := bootstrap()
+
 	app := fiber.New(fiber.Config{
 		AppName:      "LeviathanBolu Orchestrator",
 		ErrorHandler: globalErrorHandler,
 	})
+
 	routes.SetupRoutes(app, router)
+
 	app.Get("/docs/swagger.json", func(c fiber.Ctx) error {
-		return c.SendFile("./docs/swagger.json")
+		c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+		return c.Send(docs.SwaggerJSON)
 	})
 	app.Get("/docs", func(c fiber.Ctx) error {
-		c.Set("Content-Type", "text/html")
+		c.Set(fiber.HeaderContentType, fiber.MIMETextHTMLCharsetUTF8)
 		return c.SendString(scalarHTML())
 	})
-	app.Listen(":8009")
+
+	// Run the server in a goroutine so we can listen for shutdown signals
+	// on the main goroutine below.
+	go func() {
+		if err := app.Listen(":" + cfg.AppPort); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("server stopped unexpectedly: %v", err)
+		}
+	}()
+
+	gracefulShutdown(app, db, rdb)
 }
 
-func globalErrorHandler(c fiber.Ctx, err error) error {
-	code := fiber.StatusInternalServerError
-	if e, ok := err.(*fiber.Error); ok {
-		code = e.Code
+// gracefulShutdown blocks until SIGINT/SIGTERM is received, then drains
+// in-flight requests and closes downstream connections before exiting.
+// Without this, a container orchestrator's SIGTERM during a rolling
+// deploy would kill in-flight requests and leave DB/Redis connections
+// dangling instead of closing them cleanly.
+func gracefulShutdown(app *fiber.App, db *gorm.DB, rdb *redis.Client) {
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("shutting down gracefully...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
+		log.Printf("error during server shutdown: %v", err)
 	}
-	return c.Status(code).JSON(fiber.Map{
-		"status":  fmt.Sprintf("%d", code),
-		"message": err.Error(),
+
+	if sqlDB, err := db.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+	_ = rdb.Close()
+
+	log.Println("shutdown complete")
+}
+
+// globalErrorHandler centralizes error -> HTTP response mapping so
+// handlers can just `return err` from repository/service calls.
+func globalErrorHandler(c fiber.Ctx, err error) error {
+	var fiberErr *fiber.Error
+	if errors.As(err, &fiberErr) {
+		return c.Status(fiberErr.Code).JSON(fiber.Map{
+			"status":  fmt.Sprintf("%d", fiberErr.Code),
+			"message": fiberErr.Message,
+		})
+	}
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"status":  "404",
+			"message": "Requested resource not found",
+		})
+	}
+
+	log.Printf("[error] %s %s: %v", c.Method(), c.Path(), err)
+	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		"status":  "500",
+		"message": "Internal server error. Please try again later",
 	})
 }
 
@@ -80,7 +175,7 @@ func scalarHTML() string {
 	return `<!DOCTYPE html>
 <html>
 <head>
-  <title>PMI Blood Stock — API Docs</title>
+  <title>LeviathanBolu — API Docs</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>

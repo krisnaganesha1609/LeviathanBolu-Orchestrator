@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/domain"
@@ -14,6 +15,7 @@ type DeviceRepository interface {
 	GetByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.Device, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Device, error)
 	Update(ctx context.Context, device *domain.Device) error
+	UpdateLastSeenAt(ctx context.Context, id uuid.UUID, lastSeenAt time.Time) error
 	Delete(ctx context.Context, id uuid.UUID) error
 }
 
@@ -29,18 +31,18 @@ func InitDeviceRepository(db *gorm.DB) DeviceRepository {
 
 // Create implements [DeviceRepository].
 func (d *DeviceRepositoryImpl) Create(ctx context.Context, device *domain.Device) error {
-	return d.db.Create(device).Error
+	return d.db.WithContext(ctx).Create(device).Error
 }
 
 // Delete implements [DeviceRepository].
 func (d *DeviceRepositoryImpl) Delete(ctx context.Context, id uuid.UUID) error {
-	return d.db.Delete(&domain.Device{}, id).Error
+	return d.db.WithContext(ctx).Where("id = ?", id).Delete(&domain.Device{}).Error
 }
 
 // GetByID implements [DeviceRepository].
 func (d *DeviceRepositoryImpl) GetByID(ctx context.Context, id uuid.UUID) (*domain.Device, error) {
 	var device domain.Device
-	err := d.db.Where("id = ?", id).First(&device).Error
+	err := d.db.WithContext(ctx).Where("id = ?", id).First(&device).Error
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +51,7 @@ func (d *DeviceRepositoryImpl) GetByID(ctx context.Context, id uuid.UUID) (*doma
 
 func (d *DeviceRepositoryImpl) GetAll(ctx context.Context) ([]*domain.Device, error) {
 	var devices []*domain.Device
-	err := d.db.Find(&devices).Error
+	err := d.db.WithContext(ctx).Find(&devices).Error
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +61,7 @@ func (d *DeviceRepositoryImpl) GetAll(ctx context.Context) ([]*domain.Device, er
 // GetByUserID implements [DeviceRepository].
 func (d *DeviceRepositoryImpl) GetByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.Device, error) {
 	var devices []*domain.Device
-	err := d.db.Where("user_id = ?", userID).Find(&devices).Error
+	err := d.db.WithContext(ctx).Where("user_id = ?", userID).Find(&devices).Error
 	if err != nil {
 		return nil, err
 	}
@@ -68,5 +70,16 @@ func (d *DeviceRepositoryImpl) GetByUserID(ctx context.Context, userID uuid.UUID
 
 // Update implements [DeviceRepository].
 func (d *DeviceRepositoryImpl) Update(ctx context.Context, device *domain.Device) error {
-	return d.db.Save(device).Error
+	return d.db.WithContext(ctx).Save(device).Error
+}
+
+// UpdateLastSeenAt updates only the last_seen_at column, leaving every
+// other column untouched. This exists because a naive Save() on a
+// partially-populated struct would overwrite UserID/DeviceName/Platform
+// with zero values.
+func (d *DeviceRepositoryImpl) UpdateLastSeenAt(ctx context.Context, id uuid.UUID, lastSeenAt time.Time) error {
+	return d.db.WithContext(ctx).
+		Model(&domain.Device{}).
+		Where("id = ?", id).
+		Update("last_seen_at", lastSeenAt).Error
 }

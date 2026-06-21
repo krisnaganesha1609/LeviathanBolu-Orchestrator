@@ -2,7 +2,7 @@ package dto
 
 type UpdateUserSettingsRequest struct {
 	AssistantName string   `json:"assistant_name"`
-	WakeWord      []string `json:"wake_word" validate:"dive"`
+	WakeWord      []string `json:"wake_word" validate:"omitempty,dive,required,min=2"`
 	Language      string   `json:"language"`
 
 	PreferredLLM string `json:"preferred_llm"`

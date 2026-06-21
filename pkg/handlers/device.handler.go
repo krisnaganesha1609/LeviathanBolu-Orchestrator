@@ -27,11 +27,11 @@ func InitDeviceHandler(deviceService services.DeviceService) DeviceHandler {
 func (d *DeviceHandlerImpl) GetUserDevices(c fiber.Ctx) error {
 	userID := c.Params("user_id")
 	if userID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "user ID is required",
+		return utils.ResponseBadRequest(c, []utils.ValidationError{
+			{Field: "user_id", Message: "user_id is required"},
 		})
 	}
-	uuid, err := uuid.Parse(userID)
+	id, err := uuid.Parse(userID)
 	if err != nil {
 		return utils.ResponseBadRequest(c, []utils.ValidationError{
 			{
@@ -40,7 +40,7 @@ func (d *DeviceHandlerImpl) GetUserDevices(c fiber.Ctx) error {
 			},
 		})
 	}
-	devices, err := d.DeviceService.GetDevicesByUserID(c, uuid)
+	devices, err := d.DeviceService.GetDevicesByUserID(c.Context(), id)
 	if err != nil {
 		return err
 	}
@@ -61,16 +61,18 @@ func (d *DeviceHandlerImpl) GetUserDevices(c fiber.Ctx) error {
 func (d *DeviceHandlerImpl) RegisterDevice(c fiber.Ctx) error {
 	var req dto.CreateDeviceRequest
 	if err := c.Bind().Body(&req); err != nil {
-		return utils.ResponseBadRequest(c, []string{"invalid request body"})
+		return utils.ResponseBadRequest(c, []utils.ValidationError{
+			{Field: "body", Message: "invalid request body"},
+		})
 	}
 
 	if errs := utils.ValidateStruct(req); len(errs) > 0 {
 		return utils.ResponseBadRequest(c, errs)
 	}
 
-	if err := d.DeviceService.CreateDevice(c, req); err != nil {
+	if err := d.DeviceService.CreateDevice(c.Context(), req); err != nil {
 		return err
 	}
 
-	return utils.ResponseCreated(c, "Device registered successfully")
+	return utils.ResponseCreated(c, "device")
 }

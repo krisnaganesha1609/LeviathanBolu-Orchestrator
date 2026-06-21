@@ -1,7 +1,8 @@
 package services
 
 import (
-	"github.com/gofiber/fiber/v3"
+	"context"
+
 	"github.com/google/uuid"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/domain"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/dto"
@@ -9,9 +10,9 @@ import (
 )
 
 type UserSettingsService interface {
-	SetDefaultUserSettings(c fiber.Ctx, userID uuid.UUID) error
-	GetUserSettings(c fiber.Ctx, userID uuid.UUID) (*domain.UserSettings, error)
-	UpdateUserSettings(c fiber.Ctx, userID uuid.UUID, settings *dto.UpdateUserSettingsRequest) error
+	SetDefaultUserSettings(ctx context.Context, userID uuid.UUID) error
+	GetUserSettings(ctx context.Context, userID uuid.UUID) (*domain.UserSettings, error)
+	UpdateUserSettings(ctx context.Context, userID uuid.UUID, settings *dto.UpdateUserSettingsRequest) error
 }
 
 type UserSettingsServiceImpl struct {
@@ -25,13 +26,13 @@ func InitUserSettingsService(userSettingsRepository repositories.UserSettingsRep
 }
 
 // GetUserSettings implements [UserSettingsService].
-func (u *UserSettingsServiceImpl) GetUserSettings(c fiber.Ctx, userID uuid.UUID) (*domain.UserSettings, error) {
-	return u.UserSettingsRepository.GetByUserID(c, userID)
+func (u *UserSettingsServiceImpl) GetUserSettings(ctx context.Context, userID uuid.UUID) (*domain.UserSettings, error) {
+	return u.UserSettingsRepository.GetByUserID(ctx, userID)
 }
 
 // SetDefaultUserSettings implements [UserSettingsService].
-func (u *UserSettingsServiceImpl) SetDefaultUserSettings(c fiber.Ctx, userID uuid.UUID) error {
-	return u.UserSettingsRepository.Create(c, &domain.UserSettings{
+func (u *UserSettingsServiceImpl) SetDefaultUserSettings(ctx context.Context, userID uuid.UUID) error {
+	return u.UserSettingsRepository.Create(ctx, &domain.UserSettings{
 		UserID:        userID,
 		AssistantName: "LeviathanBolu",
 		WakeWord:      []string{"Bolu", "Hey Bolu", "Ok Bolu", "Leviathan", "Rise Leviathan"},
@@ -43,13 +44,10 @@ func (u *UserSettingsServiceImpl) SetDefaultUserSettings(c fiber.Ctx, userID uui
 }
 
 // UpdateUserSettings implements [UserSettingsService].
-func (u *UserSettingsServiceImpl) UpdateUserSettings(c fiber.Ctx, userID uuid.UUID, settings *dto.UpdateUserSettingsRequest) error {
-	existingSettings, err := u.UserSettingsRepository.GetByUserID(c, userID)
+func (u *UserSettingsServiceImpl) UpdateUserSettings(ctx context.Context, userID uuid.UUID, settings *dto.UpdateUserSettingsRequest) error {
+	existingSettings, err := u.UserSettingsRepository.GetByUserID(ctx, userID)
 	if err != nil {
 		return err
-	}
-	if existingSettings == nil {
-		return fiber.ErrNotFound
 	}
 	existingSettings.AssistantName = settings.AssistantName
 	existingSettings.WakeWord = settings.WakeWord
@@ -57,5 +55,5 @@ func (u *UserSettingsServiceImpl) UpdateUserSettings(c fiber.Ctx, userID uuid.UU
 	existingSettings.PreferredLLM = settings.PreferredLLM
 	existingSettings.PreferredTTS = settings.PreferredTTS
 	existingSettings.Theme = settings.Theme
-	return u.UserSettingsRepository.Update(c, existingSettings)
+	return u.UserSettingsRepository.Update(ctx, existingSettings)
 }

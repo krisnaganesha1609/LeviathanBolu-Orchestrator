@@ -26,7 +26,7 @@ func InitUserSettingsHandler(userSettingsService services.UserSettingsService) U
 // GetUserSettings implements [UserSettingsHandler].
 func (u *UserSettingsHandlerImpl) GetUserSettings(c fiber.Ctx) error {
 	userID := c.Params("user_id")
-	uuid, err := uuid.Parse(userID)
+	id, err := uuid.Parse(userID)
 	if err != nil {
 		return utils.ResponseBadRequest(c, []utils.ValidationError{
 			{
@@ -35,17 +35,24 @@ func (u *UserSettingsHandlerImpl) GetUserSettings(c fiber.Ctx) error {
 			},
 		})
 	}
-	settings, err := u.UserSettingsService.GetUserSettings(c, uuid)
+	settings, err := u.UserSettingsService.GetUserSettings(c.Context(), id)
 	if err != nil {
 		return err
 	}
-	return utils.ResponseOK(c, "User settings retrieved successfully", settings)
+	return utils.ResponseOK(c, "User settings retrieved successfully", dto.UserSettingsResponse{
+		AssistantName: settings.AssistantName,
+		WakeWord:      settings.WakeWord,
+		Language:      settings.Language,
+		PreferredLLM:  settings.PreferredLLM,
+		PreferredTTS:  settings.PreferredTTS,
+		Theme:         settings.Theme,
+	})
 }
 
 // UpdateUserSettings implements [UserSettingsHandler].
 func (u *UserSettingsHandlerImpl) UpdateUserSettings(c fiber.Ctx) error {
 	userID := c.Params("user_id")
-	uuid, err := uuid.Parse(userID)
+	id, err := uuid.Parse(userID)
 	if err != nil {
 		return utils.ResponseBadRequest(c, []utils.ValidationError{
 			{
@@ -54,12 +61,14 @@ func (u *UserSettingsHandlerImpl) UpdateUserSettings(c fiber.Ctx) error {
 			},
 		})
 	}
-	var req *dto.UpdateUserSettingsRequest
+	var req dto.UpdateUserSettingsRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return err
 	}
-	err = u.UserSettingsService.UpdateUserSettings(c, uuid, req)
-	if err != nil {
+	if errs := utils.ValidateStruct(req); len(errs) > 0 {
+		return utils.ResponseBadRequest(c, errs)
+	}
+	if err := u.UserSettingsService.UpdateUserSettings(c.Context(), id, &req); err != nil {
 		return err
 	}
 	return utils.ResponseOK(c, "User settings updated successfully", nil)

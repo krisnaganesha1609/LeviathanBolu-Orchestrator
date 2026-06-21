@@ -9,7 +9,7 @@ type CreateUserRequest struct {
 
 type UpdateUserRequest struct {
 	ID    uuid.UUID `json:"id" validate:"required"`
-	Email string    `json:"email" validate:"email"`
+	Email string    `json:"email" validate:"omitempty,email"`
 	Name  string    `json:"name"`
 }
 

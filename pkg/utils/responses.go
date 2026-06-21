@@ -103,9 +103,18 @@ func ResponseForbidden(c fiber.Ctx) error {
 }
 
 // ResponseInternalError — 500.
-func ResponseInternalError(c fiber.Ctx) error {
+//
+// NOTE: this used to call c.Err().Error() to build the message. fiber v3's
+// Ctx.Err() is a documented no-op (always nil, since fasthttp doesn't
+// support real request cancellation) — calling .Error() on that nil value
+// panics. The caller now passes the real error explicitly.
+func ResponseInternalError(c fiber.Ctx, err error) error {
+	msg := "Internal server error. Please try again later"
+	if err != nil {
+		msg = "Internal server error: " + err.Error() + ". Please try again later"
+	}
 	return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
 		Status:  "500",
-		Message: "Internal server error: " + c.Err().Error() + ". Please try again later",
+		Message: msg,
 	})
 }
