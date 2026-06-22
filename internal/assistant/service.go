@@ -60,7 +60,7 @@ func (s *AssistantService) Stream(
 
 	systemPrompt := req.SystemPrompt
 	if systemPrompt == "" {
-		systemPrompt = BuildSystemPrompt("LeviathanBolu", "id")
+		systemPrompt = BuildSystemPrompt("LeviathanBolu", "id", "")
 	}
 
 	// Build working history: prior turns + new user message.

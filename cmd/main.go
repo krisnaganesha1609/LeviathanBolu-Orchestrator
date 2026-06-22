@@ -86,7 +86,7 @@ func bootstrap() (routes.Routes, *configs.OrchestratorConfig, *gorm.DB, *redis.C
 
 	// ── Assistant ─────────────────────────────────────────────────────────
 	assistantSvc := assistant.NewAssistantService(llmProvider, registry, executor)
-	systemPrompt := assistant.BuildSystemPrompt(cfg.AssistantName, cfg.AssistantLanguage)
+	systemPrompt := assistant.BuildSystemPrompt(cfg.AssistantName, cfg.AssistantLanguage, "")
 
 	assistantHandler := handlers.InitAssistantHandler(assistantSvc, systemPrompt)
 

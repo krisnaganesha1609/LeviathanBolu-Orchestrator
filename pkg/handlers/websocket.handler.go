@@ -14,10 +14,9 @@ import (
 
 // wsIncoming is the shape the Flutter client sends over the WebSocket.
 type wsIncoming struct {
-	// Action is an optional command ("clear_history").
-	// If empty, Message is treated as a chat input.
-	Action  string `json:"action,omitempty"`
-	Message string `json:"message,omitempty"`
+	Action      string `json:"action,omitempty"` // "clear_history" | "ping"
+	Message     string `json:"message,omitempty"`
+	Personality string `json:"personality,omitempty"` // "bolu" | "leviathan"
 }
 
 // WSHandler wraps AssistantService for WebSocket connections.
@@ -113,10 +112,18 @@ func (h *WSHandler) HandleWS(conn *websocket.Conn) {
 		// Buffer of 10 lets Stream() stay a few events ahead without blocking.
 		events := make(chan assistant.Event, 10)
 
+		// Resolve system prompt berdasarkan personality
+		personality := assistant.Personality(incoming.Personality)
+		if personality == "" {
+			personality = assistant.PersonalityBolu
+		}
+		systemPrompt := assistant.BuildSystemPrompt("LeviathanBolu", "id", personality)
+
 		go h.Service.Stream(ctx, assistant.ChatRequest{
 			Message:      incoming.Message,
 			History:      history,
-			SystemPrompt: h.SystemPrompt,
+			SystemPrompt: systemPrompt,
+			Personality:  string(personality),
 		}, events)
 
 		var updatedHistory []llm.Message
