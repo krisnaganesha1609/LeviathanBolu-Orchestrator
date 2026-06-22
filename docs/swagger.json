@@ -2,183 +2,931 @@
   "openapi": "3.0.3",
   "info": {
     "title": "LeviathanBolu Orchestrator API",
-    "description": "Backend orchestrator for the LeviathanBolu personal AI assistant: user, device, and settings management. The assistant/tool-calling surface will be documented here as it lands.",
-    "version": "0.1.0"
+    "description": "Backend orchestrator for the LeviathanBolu personal AI assistant.\n\n## Architecture\nTwo interaction surfaces exist:\n- **REST API** (`/api/*`) — standard request/response, good for testing and management operations.\n- **WebSocket** (`/ws/assistant/:device_id`) — persistent connection with real-time event streaming per turn. This is the primary surface the Flutter app uses.\n\n## WebSocket Event Protocol\nConnect to `ws://host/ws/assistant/:device_id`, then send and receive JSON frames.\n\n### Client → Server\n```json\n{ \"message\": \"Gimana kondisi hidroponik?\" }\n{ \"action\": \"clear_history\" }\n{ \"action\": \"ping\" }\n```\n\n### Server → Client (streamed per turn)\n| Event | When |\n|---|---|\n| `assistant_thinking` | LLM call started (orb pulse) |\n| `tool_called` | A tool is executing |\n| `tool_result` | Tool finished, result available |\n| `assistant_reply` | Final text reply from model |\n| `done` | Turn fully complete, includes `tools_used` |\n| `error` | Something went wrong |\n| `history_cleared` | Session history was reset |\n\n```json\n{ \"event\": \"assistant_thinking\" }\n{ \"event\": \"tool_called\", \"tool\": \"ehydrotel_get_status\" }\n{ \"event\": \"tool_result\", \"tool\": \"ehydrotel_get_status\", \"data\": { \"ph\": 6.3, \"ppm\": 920, \"water_temp\": 24 } }\n{ \"event\": \"assistant_reply\", \"message\": \"Kondisi hidroponik normal...\" }\n{ \"event\": \"done\", \"data\": { \"tools_used\": [\"ehydrotel_get_status\"] } }\n```\n\n## Standard Response Envelope\nAll REST endpoints return:\n```json\n{ \"status\": \"200\", \"message\": \"...\", \"data\": { ... } }\n```",
+    "version": "0.4.0",
+    "contact": {
+      "name": "krisnaganesha1609",
+      "url": "https://github.com/krisnaganesha1609/LeviathanBolu-BE"
+    }
   },
   "servers": [
-    { "url": "/api", "description": "API base path" }
+    {
+      "url": "http://localhost:8009/api",
+      "description": "Local development"
+    },
+    {
+      "url": "http://localhost:8009",
+      "description": "Local (WebSocket base)"
+    }
   ],
   "tags": [
-    { "name": "Users" },
-    { "name": "Devices" },
-    { "name": "Settings" }
+    {
+      "name": "Health",
+      "description": "Liveness and readiness probes"
+    },
+    {
+      "name": "Assistant",
+      "description": "AI assistant interaction — REST fallback and WebSocket streaming"
+    },
+    {
+      "name": "Users",
+      "description": "User registration and management"
+    },
+    {
+      "name": "Devices",
+      "description": "Device registration and listing"
+    },
+    {
+      "name": "Settings",
+      "description": "Per-user assistant preferences"
+    }
   ],
   "paths": {
-    "/users": {
+    "/livez": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Liveness probe",
+        "description": "Returns 200 as long as the HTTP server is up. Used by Docker HEALTHCHECK and container orchestrators.",
+        "servers": [
+          {
+            "url": "http://localhost:8009"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                },
+                "example": {
+                  "status": "ok"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Readiness probe",
+        "description": "Pings PostgreSQL and Redis with a 2-second timeout. Returns 200 only when both dependencies are reachable. Use this to gate traffic in a rolling deploy.",
+        "servers": [
+          {
+            "url": "http://localhost:8009"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "All dependencies reachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                },
+                "example": {
+                  "status": "ok"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "One or more dependencies are unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                },
+                "example": {
+                  "status": "unavailable"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ws/assistant/{device_id}": {
+      "get": {
+        "tags": [
+          "Assistant"
+        ],
+        "summary": "WebSocket — real-time assistant stream",
+        "description": "**Upgrade this connection to WebSocket** (`ws://` or `wss://`).\n\nOne persistent connection per device. The client sends chat messages and receives a stream of events for each turn. Conversation history is automatically stored in Redis (TTL configurable via `SESSION_TTL_HOURS`) and replayed on reconnect.\n\n### Client frames\n| Field | Type | Description |\n|---|---|---|\n| `message` | string | Chat text to send to the assistant |\n| `action` | string | `clear_history` \\| `ping` |\n\n### Server event frames\nSee the top-level description for the full event reference.\n\n### Keep-alive\nSend `{\"action\": \"ping\"}` every ~30s to prevent the 5-minute idle timeout from closing the connection.",
+        "servers": [
+          {
+            "url": "http://localhost:8009"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "description": "Unique device identifier. Determines which Redis session (conversation history) is loaded. Use the same ID as the registered Device.ID for consistency.",
+            "schema": {
+              "type": "string",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade successful — streaming begins"
+          },
+          "426": {
+            "description": "Upgrade required — must be a WebSocket request"
+          }
+        }
+      }
+    },
+    "/assistant/chat": {
       "post": {
-        "tags": ["Users"],
-        "summary": "Register a new user",
+        "tags": [
+          "Assistant"
+        ],
+        "summary": "Chat — single-turn HTTP fallback",
+        "description": "Synchronous alternative to the WebSocket endpoint. Useful for:\n- Quick testing with `curl` / Postman\n- Clients that don't support WebSocket\n- Integration tests\n\nThe full tool-calling loop still runs server-side (same code as the WS path), but events are not streamed — you get the final reply only once the turn is complete.\n\nFor production Flutter usage, prefer the WebSocket endpoint.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CreateUserRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/AssistantChatRequest"
+              },
+              "examples": {
+                "simple": {
+                  "summary": "Plain question",
+                  "value": {
+                    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "message": "Gimana kondisi hidroponik sekarang?"
+                  }
+                },
+                "with_history": {
+                  "summary": "With prior conversation",
+                  "value": {
+                    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "message": "PPM-nya normal gak?",
+                    "history": [
+                      {
+                        "role": "user",
+                        "content": "Gimana kondisi hidroponik sekarang?"
+                      },
+                      {
+                        "role": "model",
+                        "content": "pH 6.3, PPM 920, suhu 24°C — semua normal."
+                      }
+                    ]
+                  }
+                }
+              }
             }
           }
         },
         "responses": {
-          "201": { "description": "User created" },
-          "400": { "description": "Validation error" }
+          "200": {
+            "description": "Assistant reply",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardResponse"
+                },
+                "example": {
+                  "status": "200",
+                  "message": "success",
+                  "data": {
+                    "reply": "Kondisi hidroponik saat ini cukup baik! pH 6.3 ✅, PPM 920 ✅, suhu air 24°C ✅.",
+                    "tools_used": [
+                      "ehydrotel_get_status"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "LLM or tool execution error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Register a new user",
+        "description": "Creates a user and automatically seeds their UserSettings with defaults (assistant name, wake words, language, theme).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              },
+              "example": {
+                "email": "krisna@leviathan.dev",
+                "name": "Krisna"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardResponse"
+                },
+                "example": {
+                  "status": "201",
+                  "message": "Successfully created a user"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (missing email, invalid format, etc.)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/users/{id}": {
       "get": {
-        "tags": ["Users"],
+        "tags": [
+          "Users"
+        ],
         "summary": "Get a user by ID",
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "User found" },
-          "400": { "description": "Invalid ID format" },
-          "404": { "description": "User not found" }
+          "200": {
+            "description": "User found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardResponse"
+                },
+                "example": {
+                  "status": "200",
+                  "message": "User retrieved successfully",
+                  "data": {
+                    "id": "550e8400-e29b-41d4-a716-446655440000",
+                    "email": "krisna@leviathan.dev",
+                    "name": "Krisna",
+                    "updated_at": "2026-06-21 08:00:00"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid UUID format"
+          },
+          "404": {
+            "description": "User not found"
+          }
         }
       },
       "put": {
-        "tags": ["Users"],
+        "tags": [
+          "Users"
+        ],
         "summary": "Partially update a user",
+        "description": "Only non-empty fields are applied. Fields absent or empty in the request body are left unchanged.",
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/UpdateUserRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserRequest"
+              },
+              "example": {
+                "name": "Krisna Ganesha"
+              }
             }
           }
         },
         "responses": {
-          "200": { "description": "User updated" },
-          "400": { "description": "Validation error" },
-          "404": { "description": "User not found" }
+          "200": {
+            "description": "User updated"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "404": {
+            "description": "User not found"
+          }
         }
       }
     },
     "/users/by-email/{email}": {
       "get": {
-        "tags": ["Users"],
+        "tags": [
+          "Users"
+        ],
         "summary": "Get a user by email",
         "parameters": [
-          { "name": "email", "in": "path", "required": true, "schema": { "type": "string", "format": "email" } }
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "email"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "User found" },
-          "404": { "description": "User not found" }
+          "200": {
+            "description": "User found"
+          },
+          "404": {
+            "description": "User not found"
+          }
         }
       }
     },
     "/devices": {
       "post": {
-        "tags": ["Devices"],
-        "summary": "Register a device for a user",
+        "tags": [
+          "Devices"
+        ],
+        "summary": "Register a device",
+        "description": "Associates a device with a user. The `device_id` returned here is what you pass to the WebSocket endpoint as `:device_id`.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CreateDeviceRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/CreateDeviceRequest"
+              },
+              "examples": {
+                "android": {
+                  "summary": "Android phone",
+                  "value": {
+                    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "device_name": "Pixel 9 Pro",
+                    "platform": "android"
+                  }
+                },
+                "desktop": {
+                  "summary": "Desktop app",
+                  "value": {
+                    "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "device_name": "Dev Machine",
+                    "platform": "linux"
+                  }
+                }
+              }
             }
           }
         },
         "responses": {
-          "201": { "description": "Device registered" },
-          "400": { "description": "Validation error" }
+          "201": {
+            "description": "Device registered"
+          },
+          "400": {
+            "description": "Validation error"
+          }
         }
       }
     },
     "/devices/{user_id}": {
       "get": {
-        "tags": ["Devices"],
-        "summary": "List devices belonging to a user",
+        "tags": [
+          "Devices"
+        ],
+        "summary": "List devices for a user",
         "parameters": [
-          { "name": "user_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "Devices retrieved" },
-          "400": { "description": "Invalid ID format" }
+          "200": {
+            "description": "Device list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardResponse"
+                },
+                "example": {
+                  "status": "200",
+                  "message": "Devices retrieved successfully",
+                  "data": [
+                    {
+                      "id": "661f9511-f30c-52e5-b827-557766551111",
+                      "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                      "device_name": "Pixel 9 Pro",
+                      "platform": "android",
+                      "last_seen_at": "2026-06-21 08:00:00"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid UUID format"
+          }
         }
       }
     },
     "/settings/{user_id}": {
       "get": {
-        "tags": ["Settings"],
-        "summary": "Get a user's assistant settings",
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Get assistant settings",
+        "description": "Returns the user's assistant preferences. Automatically created with sensible defaults when the user is first registered.",
         "parameters": [
-          { "name": "user_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "Settings retrieved" },
-          "400": { "description": "Invalid ID format" },
-          "404": { "description": "Settings not found" }
+          "200": {
+            "description": "Settings retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardResponse"
+                },
+                "example": {
+                  "status": "200",
+                  "message": "User settings retrieved successfully",
+                  "data": {
+                    "assistant_name": "LeviathanBolu",
+                    "wake_word": [
+                      "Bolu",
+                      "Hey Bolu",
+                      "Ok Bolu",
+                      "Leviathan",
+                      "Rise Leviathan"
+                    ],
+                    "language": "id",
+                    "preferred_llm": "none",
+                    "preferred_tts": "none",
+                    "theme": "dark"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid UUID format"
+          },
+          "404": {
+            "description": "Settings not found"
+          }
         }
       },
       "put": {
-        "tags": ["Settings"],
-        "summary": "Update a user's assistant settings",
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Update assistant settings",
+        "description": "All fields are optional — only provided fields are updated.",
         "parameters": [
-          { "name": "user_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/UpdateUserSettingsRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserSettingsRequest"
+              },
+              "example": {
+                "assistant_name": "Bolu",
+                "wake_word": [
+                  "Hey Bolu",
+                  "Rise Leviathan"
+                ],
+                "language": "id",
+                "preferred_llm": "gemini",
+                "preferred_tts": "none",
+                "theme": "dark"
+              }
             }
           }
         },
         "responses": {
-          "200": { "description": "Settings updated" },
-          "400": { "description": "Validation error" }
+          "200": {
+            "description": "Settings updated"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "404": {
+            "description": "Settings not found"
+          }
         }
       }
     }
   },
   "components": {
     "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable"
+            ]
+          }
+        }
+      },
+      "StandardResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "200"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {}
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "500"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ValidationErrorResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "400"
+          },
+          "message": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "AssistantChatRequest": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "message"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID of the user making the request"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The user's chat message"
+          },
+          "history": {
+            "type": "array",
+            "description": "Optional prior conversation. The WebSocket endpoint handles this automatically via Redis; the HTTP endpoint requires the client to provide it manually.",
+            "items": {
+              "$ref": "#/components/schemas/LLMMessage"
+            }
+          }
+        }
+      },
+      "AssistantChatResponse": {
+        "type": "object",
+        "properties": {
+          "reply": {
+            "type": "string",
+            "description": "The assistant's final text reply"
+          },
+          "tools_used": {
+            "type": "array",
+            "description": "Names of every tool called during this turn",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "ehydrotel_get_status"
+            ]
+          }
+        }
+      },
+      "LLMMessage": {
+        "type": "object",
+        "description": "A single turn in the conversation history",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "model",
+              "tool"
+            ],
+            "description": "Note: model (not assistant) follows Gemini's convention"
+          },
+          "content": {
+            "type": "string",
+            "description": "Plain text for user/model turns"
+          },
+          "tool_call": {
+            "$ref": "#/components/schemas/ToolCall"
+          },
+          "tool_result": {
+            "$ref": "#/components/schemas/ToolResult"
+          }
+        }
+      },
+      "ToolCall": {
+        "type": "object",
+        "description": "Set on a model-role message when the LLM wants to invoke a tool",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "ehydrotel_get_status"
+          },
+          "arguments": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ToolResult": {
+        "type": "object",
+        "description": "Set on a tool-role message carrying the tool's output back to the model",
+        "properties": {
+          "tool_call_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "content": {
+            "description": "Anything serializable"
+          }
+        }
+      },
       "CreateUserRequest": {
         "type": "object",
-        "required": ["email", "name"],
+        "required": [
+          "email",
+          "name"
+        ],
         "properties": {
-          "email": { "type": "string", "format": "email" },
-          "name": { "type": "string" }
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "UpdateUserRequest": {
         "type": "object",
+        "description": "All fields are optional — only non-empty values are applied",
         "properties": {
-          "email": { "type": "string", "format": "email" },
-          "name": { "type": "string" }
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "example": "2026-06-21 08:00:00"
+          }
         }
       },
       "CreateDeviceRequest": {
         "type": "object",
-        "required": ["user_id", "device_name", "platform"],
+        "required": [
+          "user_id",
+          "device_name",
+          "platform"
+        ],
         "properties": {
-          "user_id": { "type": "string", "format": "uuid" },
-          "device_name": { "type": "string" },
-          "platform": { "type": "string" }
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "device_name": {
+            "type": "string",
+            "example": "Pixel 9 Pro"
+          },
+          "platform": {
+            "type": "string",
+            "example": "android",
+            "description": "android | ios | windows | macos | linux | web"
+          }
+        }
+      },
+      "DeviceResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "device_name": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "example": "2026-06-21 08:00:00"
+          }
         }
       },
       "UpdateUserSettingsRequest": {
         "type": "object",
         "properties": {
-          "assistant_name": { "type": "string" },
-          "wake_word": { "type": "array", "items": { "type": "string" } },
-          "language": { "type": "string" },
-          "preferred_llm": { "type": "string" },
-          "preferred_tts": { "type": "string" },
-          "theme": { "type": "string" }
+          "assistant_name": {
+            "type": "string",
+            "example": "LeviathanBolu"
+          },
+          "wake_word": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 2
+            },
+            "example": [
+              "Hey Bolu",
+              "Rise Leviathan"
+            ]
+          },
+          "language": {
+            "type": "string",
+            "example": "id",
+            "description": "id | en"
+          },
+          "preferred_llm": {
+            "type": "string",
+            "example": "gemini",
+            "description": "gemini | openrouter | none"
+          },
+          "preferred_tts": {
+            "type": "string",
+            "example": "none"
+          },
+          "theme": {
+            "type": "string",
+            "example": "dark",
+            "description": "dark | light"
+          }
+        }
+      },
+      "UserSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "assistant_name": {
+            "type": "string"
+          },
+          "wake_word": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "language": {
+            "type": "string"
+          },
+          "preferred_llm": {
+            "type": "string"
+          },
+          "preferred_tts": {
+            "type": "string"
+          },
+          "theme": {
+            "type": "string"
+          }
         }
       }
     }

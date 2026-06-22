@@ -36,7 +36,18 @@ type OrchestratorConfig struct {
 	RedisPassword string
 	RedisDB       int
 
-	APIKey string
+	SessionTTL time.Duration
+
+	AssistantName     string
+	AssistantLanguage string // "id" or "en"
+
+	LLMProvider string
+
+	GeminiAPIKey string
+	GeminiModel  string // default: gemini-2.5-flash
+
+	OpenRouterAPIKey string
+	OpenRouterModel  string // default: google/gemini-2.5-flash
 }
 
 // LoadConfig loads configuration from environment variables.
@@ -70,7 +81,18 @@ func LoadConfig() (*OrchestratorConfig, error) {
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
 
-		APIKey: getEnv("API_KEY", ""),
+		SessionTTL: time.Duration(getEnvAsInt("SESSION_TTL_HOURS", 24)) * time.Hour,
+
+		AssistantName:     getEnv("ASSISTANT_NAME", "LeviathanBolu"),
+		AssistantLanguage: getEnv("ASSISTANT_LANGUAGE", "id"),
+
+		LLMProvider: getEnv("LLM_PROVIDER", "gemini"),
+
+		GeminiAPIKey: getEnv("GEMINI_API_KEY", ""),
+		GeminiModel:  getEnv("GEMINI_MODEL", "gemini-2.5-flash"),
+
+		OpenRouterAPIKey: getEnv("OPENROUTER_API_KEY", ""),
+		OpenRouterModel:  getEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash"),
 	}
 
 	return cfg, nil

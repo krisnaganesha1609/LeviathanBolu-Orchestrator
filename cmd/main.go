@@ -12,13 +12,18 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/krisnaganesha1609/LeviathanBolu-BE/MCPServer"
+	"github.com/krisnaganesha1609/LeviathanBolu-BE/ToolServices/ehydrotel"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/docs"
+	"github.com/krisnaganesha1609/LeviathanBolu-BE/internal/assistant"
+	"github.com/krisnaganesha1609/LeviathanBolu-BE/internal/llm"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/configs"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/database"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/handlers"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/repositories"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/routes"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/services"
+	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/session"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
@@ -43,25 +48,64 @@ func bootstrap() (routes.Routes, *configs.OrchestratorConfig, *gorm.DB, *redis.C
 	database.MigratePostgres(db)
 	rdb := database.ConnectRedis(cfg)
 
-	// Repositories
+	// ── Repositories ──────────────────────────────────────────────────────
 	userRepo := repositories.InitUserRepository(db)
 	deviceRepo := repositories.InitDeviceRepository(db)
 	userSettingsRepo := repositories.InitUserSettingsRepository(db)
 
-	// Services
+	// ── Services ─────────────────────────────────────────────────────────
 	userSettingsService := services.InitUserSettingsService(userSettingsRepo)
 	userService := services.InitUserService(userRepo, userSettingsService)
 	deviceService := services.InitDeviceService(deviceRepo)
 
-	// Handlers
+	// ── Handlers ─────────────────────────────────────────────────────────
 	userHandlers := handlers.InitUserHandler(userService)
 	deviceHandlers := handlers.InitDeviceHandler(deviceService)
 	userSettingsHandlers := handlers.InitUserSettingsHandler(userSettingsService)
+
+	// ── Tool Registry + Executor ──────────────────────────────────────────
+	registry := MCPServer.NewRegistry()
+	registry.Register(&ehydrotel.GetStatusTool{})
+
+	executor := MCPServer.NewExecutor(registry)
+
+	// ── LLM Provider ─────────────────────────────────────────────────────
+	var llmProvider llm.Provider
+	switch cfg.LLMProvider {
+	case "openrouter":
+		llmProvider = llm.NewOpenRouterProvider(cfg.OpenRouterAPIKey, cfg.OpenRouterModel)
+		log.Printf("[llm] provider=openrouter model=%s", cfg.OpenRouterModel)
+	default: // "gemini"
+		p, err := llm.NewGeminiProvider(context.Background(), cfg.GeminiAPIKey, cfg.GeminiModel)
+		if err != nil {
+			log.Fatalf("[llm] gemini init failed: %v", err)
+		}
+		llmProvider = p
+		log.Printf("[llm] provider=gemini model=%s", cfg.GeminiModel)
+	}
+
+	// ── Assistant ─────────────────────────────────────────────────────────
+	assistantSvc := assistant.NewAssistantService(llmProvider, registry, executor)
+	systemPrompt := assistant.BuildSystemPrompt(cfg.AssistantName, cfg.AssistantLanguage)
+
+	assistantHandler := handlers.InitAssistantHandler(assistantSvc, systemPrompt)
+
+	// ── Session Store (Redis) ─────────────────────────────────────────────
+	sessionStore := session.NewStore(rdb, cfg.SessionTTL)
+
+	// ── WebSocket Handler ─────────────────────────────────────────────────
+	wsHandler := &handlers.WSHandler{
+		Service:      assistantSvc,
+		SessionStore: sessionStore,
+		SystemPrompt: systemPrompt,
+	}
 
 	router := routes.Routes{
 		UserHandler:         userHandlers,
 		DeviceHandler:       deviceHandlers,
 		UserSettingsHandler: userSettingsHandlers,
+		AssistantHandler:    assistantHandler,
+		WSHandler:           wsHandler,
 		ReadinessProbe:      readinessProbe(db, rdb),
 	}
 
@@ -175,7 +219,7 @@ func scalarHTML() string {
 	return `<!DOCTYPE html>
 <html>
 <head>
-  <title>LeviathanBolu — API Docs</title>
+  <title>LEVIATHANBOLU — API Docs</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
