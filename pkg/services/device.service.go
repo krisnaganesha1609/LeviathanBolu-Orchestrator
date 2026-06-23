@@ -11,7 +11,7 @@ import (
 )
 
 type DeviceService interface {
-	CreateDevice(ctx context.Context, req dto.CreateDeviceRequest) error
+	CreateDevice(ctx context.Context, req dto.CreateDeviceRequest) (string, error)
 	GetDeviceByID(ctx context.Context, id uuid.UUID) (*domain.Device, error)
 	GetDevicesByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.Device, error)
 	UpdateLastSeenAt(ctx context.Context, id uuid.UUID) error
@@ -30,16 +30,19 @@ func InitDeviceService(deviceRepo repositories.DeviceRepository) DeviceService {
 // IMPLEMENTATION
 
 // CreateDevice implements [DeviceService].
-func (d *DeviceServiceImpl) CreateDevice(ctx context.Context, req dto.CreateDeviceRequest) error {
-	if err := d.DeviceRepo.Create(ctx, &domain.Device{
+func (d *DeviceServiceImpl) CreateDevice(ctx context.Context, req dto.CreateDeviceRequest) (string, error) {
+	device := &domain.Device{
 		UserID:     req.UserID,
 		DeviceName: req.DeviceName,
 		Platform:   req.Platform,
 		LastSeenAt: time.Now(),
-	}); err != nil {
-		return err
 	}
-	return nil
+	if id, err := d.DeviceRepo.Create(ctx, device); err != nil {
+		return "", err
+	} else {
+		return id, nil
+	}
+
 }
 
 // GetDeviceByID implements [DeviceService].

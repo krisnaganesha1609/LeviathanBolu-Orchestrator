@@ -10,7 +10,7 @@ import (
 )
 
 type DeviceRepository interface {
-	Create(ctx context.Context, device *domain.Device) error
+	Create(ctx context.Context, device *domain.Device) (string, error)
 	GetAll(ctx context.Context) ([]*domain.Device, error)
 	GetByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.Device, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Device, error)
@@ -30,8 +30,12 @@ func InitDeviceRepository(db *gorm.DB) DeviceRepository {
 // IMPLEMENTATION
 
 // Create implements [DeviceRepository].
-func (d *DeviceRepositoryImpl) Create(ctx context.Context, device *domain.Device) error {
-	return d.db.WithContext(ctx).Create(device).Error
+func (d *DeviceRepositoryImpl) Create(ctx context.Context, device *domain.Device) (string, error) {
+	err := d.db.WithContext(ctx).Create(device).Error
+	if err != nil {
+		return "", err
+	}
+	return device.ID.String(), nil
 }
 
 // Delete implements [DeviceRepository].

@@ -70,9 +70,9 @@ func (d *DeviceHandlerImpl) RegisterDevice(c fiber.Ctx) error {
 		return utils.ResponseBadRequest(c, errs)
 	}
 
-	if err := d.DeviceService.CreateDevice(c.Context(), req); err != nil {
+	if id, err := d.DeviceService.CreateDevice(c.Context(), req); err != nil {
 		return err
+	} else {
+		return utils.ResponseOK(c, "Device registered successfully", map[string]string{"device_id": id})
 	}
-
-	return utils.ResponseCreated(c, "device")
 }

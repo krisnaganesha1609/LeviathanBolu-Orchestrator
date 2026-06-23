@@ -11,12 +11,8 @@
   },
   "servers": [
     {
-      "url": "http://localhost:8009/api",
-      "description": "Local development"
-    },
-    {
-      "url": "http://localhost:8009",
-      "description": "Local (WebSocket base)"
+      "url": "https://orchestrator.leviathanbolu.my.id/api",
+      "description": "Production server"
     }
   ],
   "tags": [
@@ -49,11 +45,6 @@
         ],
         "summary": "Liveness probe",
         "description": "Returns 200 as long as the HTTP server is up. Used by Docker HEALTHCHECK and container orchestrators.",
-        "servers": [
-          {
-            "url": "http://localhost:8009"
-          }
-        ],
         "responses": {
           "200": {
             "description": "Server is alive",
@@ -78,11 +69,6 @@
         ],
         "summary": "Readiness probe",
         "description": "Pings PostgreSQL and Redis with a 2-second timeout. Returns 200 only when both dependencies are reachable. Use this to gate traffic in a rolling deploy.",
-        "servers": [
-          {
-            "url": "http://localhost:8009"
-          }
-        ],
         "responses": {
           "200": {
             "description": "All dependencies reachable",
@@ -120,11 +106,6 @@
         ],
         "summary": "WebSocket — real-time assistant stream",
         "description": "**Upgrade this connection to WebSocket** (`ws://` or `wss://`).\n\nOne persistent connection per device. The client sends chat messages and receives a stream of events for each turn. Conversation history is automatically stored in Redis (TTL configurable via `SESSION_TTL_HOURS`) and replayed on reconnect.\n\n### Client frames\n| Field | Type | Description |\n|---|---|---|\n| `message` | string | Chat text to send to the assistant |\n| `action` | string | `clear_history` \\| `ping` |\n\n### Server event frames\nSee the top-level description for the full event reference.\n\n### Keep-alive\nSend `{\"action\": \"ping\"}` every ~30s to prevent the 5-minute idle timeout from closing the connection.",
-        "servers": [
-          {
-            "url": "http://localhost:8009"
-          }
-        ],
         "parameters": [
           {
             "name": "device_id",
@@ -256,7 +237,7 @@
           }
         },
         "responses": {
-          "201": {
+          "200": {
             "description": "User created",
             "content": {
               "application/json": {
@@ -264,8 +245,11 @@
                   "$ref": "#/components/schemas/StandardResponse"
                 },
                 "example": {
-                  "status": "201",
-                  "message": "Successfully created a user"
+                  "status": "200",
+                  "message": "User registered successfully",
+                  "data": {
+                    "id": "550e8400-e29b-41d4-a716-446655440000"
+                  }
                 }
               }
             }
@@ -435,8 +419,22 @@
           }
         },
         "responses": {
-          "201": {
-            "description": "Device registered"
+          "200": {
+            "description": "Device registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandardResponse"
+                },
+                "example": {
+                  "status": "200",
+                  "message": "Device registered successfully",
+                  "data": {
+                    "device_id": "550e8400-e29b-41d4-a716-446655440000"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error"

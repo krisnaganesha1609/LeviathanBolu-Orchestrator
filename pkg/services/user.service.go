@@ -11,7 +11,7 @@ import (
 )
 
 type UserService interface {
-	CreateUser(ctx context.Context, req dto.CreateUserRequest) error
+	CreateUser(ctx context.Context, req dto.CreateUserRequest) (uuid.UUID, error)
 	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (*domain.User, error)
 	UpdateUser(ctx context.Context, req dto.UpdateUserRequest) error
@@ -32,21 +32,21 @@ func InitUserService(userRepositories repositories.UserRepository, userSettingsS
 // IMPLEMENTATION
 
 // CreateUser implements [UserService].
-func (u *UserServiceImpl) CreateUser(ctx context.Context, req dto.CreateUserRequest) error {
+func (u *UserServiceImpl) CreateUser(ctx context.Context, req dto.CreateUserRequest) (uuid.UUID, error) {
 	newUser := &domain.User{
 		ID:    uuid.New(),
 		Email: req.Email,
 		Name:  req.Name,
 	}
 	if err := u.UserRepositories.Create(ctx, newUser); err != nil {
-		return err
+		return uuid.Nil, err
 	}
 
 	if err := u.UserSettingsService.SetDefaultUserSettings(ctx, newUser.ID); err != nil {
-		return err
+		return uuid.Nil, err
 	}
 
-	return nil
+	return newUser.ID, nil
 }
 
 // GetUserByEmail implements [UserService].

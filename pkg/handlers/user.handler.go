@@ -74,10 +74,11 @@ func (u *UserHandlerImpl) RegisterUser(c fiber.Ctx) error {
 	if errs := utils.ValidateStruct(req); len(errs) > 0 {
 		return utils.ResponseBadRequest(c, errs)
 	}
-	if err := u.UserService.CreateUser(c.Context(), req); err != nil {
+	if id, err := u.UserService.CreateUser(c.Context(), req); err != nil {
 		return err
+	} else {
+		return utils.ResponseOK(c, "User registered successfully", map[string]string{"user_id": id.String()})
 	}
-	return utils.ResponseCreated(c, "user")
 }
 
 // UpdateUser implements [UserHandler].
