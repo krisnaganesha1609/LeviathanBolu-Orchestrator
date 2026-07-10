@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     wget \
     libopus0 \
+    libopusfile0 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r leviathan && useradd -r -g leviathan leviathan
 
