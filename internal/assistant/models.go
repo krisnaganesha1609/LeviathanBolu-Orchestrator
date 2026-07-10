@@ -1,6 +1,9 @@
 package assistant
 
-import "github.com/krisnaganesha1609/LeviathanBolu-BE/internal/llm"
+import (
+	"github.com/google/uuid"
+	"github.com/krisnaganesha1609/LeviathanBolu-BE/internal/llm"
+)
 
 // ChatRequest is what the handler layer passes to AssistantService.Chat.
 type ChatRequest struct {
@@ -16,6 +19,13 @@ type ChatRequest struct {
 	// SystemPrompt override manual. Kalau kosong, diisi otomatis
 	// berdasarkan Personality field di atas.
 	SystemPrompt string
+
+	VoiceMode bool
+
+	// ConversationID is the DeviceSession.ID created when the WebSocket
+	// connection was established. Passed through to STT / TTS workers so
+	// they can correlate audio with a specific session.
+	ConversationID uuid.UUID
 }
 
 // ChatResponse is what AssistantService.Chat returns to the handler.

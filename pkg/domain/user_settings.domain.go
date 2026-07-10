@@ -2,15 +2,18 @@ package domain
 
 import "github.com/google/uuid"
 
+// WakeWordConfig memetakan satu wake word ke personality yang diaktifkannya.
+type WakeWordConfig struct {
+	Word        string `json:"word"`
+	Personality string `json:"personality"` // "bolu" | "leviathan"
+}
+
 type UserSettings struct {
 	UserID uuid.UUID `gorm:"type:uuid;primaryKey"`
 
 	AssistantName string
-	// WakeWord is stored as a JSON array column. Plain []string has no
-	// native Postgres mapping in GORM/pgx, so without this tag inserts and
-	// scans on this field fail at runtime.
-	WakeWord []string `gorm:"serializer:json;type:jsonb"`
-	Language string
+	WakeWords     []WakeWordConfig `gorm:"serializer:json;type:jsonb;column:wake_words"`
+	Language      string
 
 	PreferredLLM string
 	PreferredTTS string

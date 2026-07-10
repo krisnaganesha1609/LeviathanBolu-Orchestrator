@@ -18,7 +18,7 @@ services:
       - postgres_data:/var/lib/postgresql
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,7 +36,7 @@ services:
       - redis_data:/data
 
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -56,12 +56,18 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
       redis:
         condition: service_healthy
 
     ports:
       - "8009:8009"
+
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "https://orchestrator.leviathanbolu.my.id/livez" ]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
 volumes:
   postgres_data:

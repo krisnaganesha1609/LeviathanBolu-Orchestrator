@@ -52,11 +52,13 @@ func bootstrap() (routes.Routes, *configs.OrchestratorConfig, *gorm.DB, *redis.C
 	userRepo := repositories.InitUserRepository(db)
 	deviceRepo := repositories.InitDeviceRepository(db)
 	userSettingsRepo := repositories.InitUserSettingsRepository(db)
+	deviceSessionRepo := repositories.InitDeviceSessionRepository(db)
 
 	// ── Services ─────────────────────────────────────────────────────────
 	userSettingsService := services.InitUserSettingsService(userSettingsRepo)
 	userService := services.InitUserService(userRepo, userSettingsService)
 	deviceService := services.InitDeviceService(deviceRepo)
+	deviceSessionService := services.InitDeviceSessionService(deviceSessionRepo)
 
 	// ── Handlers ─────────────────────────────────────────────────────────
 	userHandlers := handlers.InitUserHandler(userService)
@@ -93,11 +95,24 @@ func bootstrap() (routes.Routes, *configs.OrchestratorConfig, *gorm.DB, *redis.C
 	// ── Session Store (Redis) ─────────────────────────────────────────────
 	sessionStore := session.NewStore(rdb, cfg.SessionTTL)
 
+	sttClient := assistant.NewSTTWorkerClient(cfg.STTWorkerURL)
+	ttsClient := assistant.NewTTSWorkerClient(cfg.TTSWorkerURL)
+
+	assistantSvc.SetTTS(ttsClient)
+
+	wakeChecker := &assistant.WakeWordChecker{
+		STT:      sttClient,
+		Provider: assistant.NewDeviceWakeWordProvider(db),
+	}
+
 	// ── WebSocket Handler ─────────────────────────────────────────────────
 	wsHandler := &handlers.WSHandler{
-		Service:      assistantSvc,
-		SessionStore: sessionStore,
-		SystemPrompt: systemPrompt,
+		Service:              assistantSvc,
+		SessionStore:         sessionStore,
+		SystemPrompt:         systemPrompt,
+		WakeChecker:          wakeChecker,
+		STT:                  sttClient,
+		DeviceSessionService: deviceSessionService,
 	}
 
 	router := routes.Routes{

@@ -41,7 +41,7 @@ func (u *UserSettingsHandlerImpl) GetUserSettings(c fiber.Ctx) error {
 	}
 	return utils.ResponseOK(c, "User settings retrieved successfully", dto.UserSettingsResponse{
 		AssistantName: settings.AssistantName,
-		WakeWord:      settings.WakeWord,
+		WakeWords:     settings.WakeWords,
 		Language:      settings.Language,
 		PreferredLLM:  settings.PreferredLLM,
 		PreferredTTS:  settings.PreferredTTS,

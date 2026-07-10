@@ -48,6 +48,9 @@ type OrchestratorConfig struct {
 
 	OpenRouterAPIKey string
 	OpenRouterModel  string // default: google/gemini-2.5-flash
+
+	STTWorkerURL string
+	TTSWorkerURL string
 }
 
 // LoadConfig loads configuration from environment variables.
@@ -93,6 +96,9 @@ func LoadConfig() (*OrchestratorConfig, error) {
 
 		OpenRouterAPIKey: getEnv("OPENROUTER_API_KEY", ""),
 		OpenRouterModel:  getEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash"),
+
+		STTWorkerURL: getEnv("STT_WORKER_URL", "ws://localhost:9001/stt"),
+		TTSWorkerURL: getEnv("TTS_WORKER_URL", "ws://localhost:9002/tts"),
 	}
 
 	return cfg, nil

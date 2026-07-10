@@ -35,11 +35,17 @@ func (u *UserSettingsServiceImpl) SetDefaultUserSettings(ctx context.Context, us
 	return u.UserSettingsRepository.Create(ctx, &domain.UserSettings{
 		UserID:        userID,
 		AssistantName: "LeviathanBolu",
-		WakeWord:      []string{"Bolu", "Hey Bolu", "Ok Bolu", "Leviathan", "Rise Leviathan"},
-		Language:      "en",
-		PreferredLLM:  "none",
-		PreferredTTS:  "none",
-		Theme:         "dark",
+		WakeWords: []domain.WakeWordConfig{
+			{Word: "Bolu", Personality: "bolu"},
+			{Word: "Hey Bolu", Personality: "bolu"},
+			{Word: "Ok Bolu", Personality: "bolu"},
+			{Word: "Leviathan", Personality: "leviathan"},
+			{Word: "Rise Leviathan", Personality: "leviathan"},
+		},
+		Language:     "en",
+		PreferredLLM: "none",
+		PreferredTTS: "none",
+		Theme:        "dark",
 	})
 }
 
@@ -50,7 +56,7 @@ func (u *UserSettingsServiceImpl) UpdateUserSettings(ctx context.Context, userID
 		return err
 	}
 	existingSettings.AssistantName = settings.AssistantName
-	existingSettings.WakeWord = settings.WakeWord
+	existingSettings.WakeWords = settings.WakeWords
 	existingSettings.Language = settings.Language
 	existingSettings.PreferredLLM = settings.PreferredLLM
 	existingSettings.PreferredTTS = settings.PreferredTTS

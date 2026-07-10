@@ -12,11 +12,13 @@ type DeviceSession struct {
 
 	DeviceID uuid.UUID `gorm:"type:uuid;index;not null"`
 
-	IsActive bool
+	StartedAt time.Time
 
-	ConnectedAt time.Time
+	EndedAt time.Time
 
 	LastPingAt time.Time
+
+	DisconnectReason string
 
 	Device Device `gorm:"foreignKey:DeviceID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 }

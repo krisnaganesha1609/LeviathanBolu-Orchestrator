@@ -2,10 +2,12 @@ package assistant
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
 
+	"github.com/google/uuid"
 	MCPServer "github.com/krisnaganesha1609/LeviathanBolu-BE/MCPServer"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/internal/llm"
 )
@@ -21,6 +23,13 @@ type AssistantService struct {
 	llm      llm.Provider
 	registry *MCPServer.Registry
 	executor *MCPServer.Executor
+	tts      TextToSpeech // opsional; nil = voice mode di-skip
+}
+
+// SetTTS inject implementasi TTS (panggil sekali di main.go, mis.
+// service.SetTTS(assistant.NewTTSWorkerClient("ws://localhost:9002/tts")))
+func (s *AssistantService) SetTTS(tts TextToSpeech) {
+	s.tts = tts
 }
 
 func NewAssistantService(
@@ -87,17 +96,22 @@ func (s *AssistantService) Stream(
 			return
 		}
 
-		// ── No tool call: model returned a text reply → we're done. ──────
 		if llmResp.ToolCall == nil {
-			history = append(history, llm.Message{
-				Role:    llm.RoleModel,
-				Content: llmResp.Content,
-			})
+			history = append(history, llm.Message{Role: llm.RoleModel, Content: llmResp.Content})
 			send(Event{Event: EventReply, Message: llmResp.Content})
+
+			if req.VoiceMode {
+				if s.tts != nil {
+					s.streamTTS(ctx, llmResp.Content, Personality(req.Personality), req.ConversationID, send)
+				} else {
+					log.Printf("[assistant] VoiceMode diminta tapi TTS belum dikonfigurasi, skip audio")
+				}
+			}
+
 			send(Event{
 				Event:          EventDone,
 				Data:           map[string]any{"tools_used": toolsUsed},
-				UpdatedHistory: history, // picked up by WebSocket handler, not sent to client
+				UpdatedHistory: history,
 			})
 			return
 		}
@@ -201,4 +215,32 @@ func registryToLLMTools(registry *MCPServer.Registry) []llm.ToolDef {
 		})
 	}
 	return out
+}
+
+// streamTTS memecah teks jadi kalimat (Sentence Builder), lalu men-sintesis
+// & stream tiap kalimat sbg Opus chunk berurutan. Sequential per-kalimat
+// untuk sekarang — lihat catatan StreamingChatter di voice.go soal upgrade
+// ke true token streaming + concurrent synthesis biar makin instan.
+func (s *AssistantService) streamTTS(ctx context.Context, fullText string, personality Personality, conversationID uuid.UUID, send func(Event)) {
+	sb := &SentenceBuilder{}
+	sentences := sb.Feed(fullText)
+	sentences = append(sentences, sb.Flush()...)
+	if len(sentences) == 0 {
+		return
+	}
+
+	send(Event{Event: EventTTSStart})
+	seq := 0
+	for _, sentence := range sentences {
+		audioCh, err := s.tts.SynthesizeStream(ctx, sentence, personality, conversationID)
+		if err != nil {
+			log.Printf("[assistant] TTS gagal utk kalimat %q: %v", sentence, err)
+			continue // 1 kalimat gagal jangan gagalkan seluruh reply
+		}
+		for packet := range audioCh {
+			seq++
+			send(Event{Event: EventTTSChunk, Seq: seq, Audio: base64.StdEncoding.EncodeToString(packet)})
+		}
+	}
+	send(Event{Event: EventTTSEnd})
 }

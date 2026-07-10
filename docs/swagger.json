@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "LeviathanBolu Orchestrator API",
-    "description": "Backend orchestrator for the LeviathanBolu personal AI assistant.\n\n## Architecture\nTwo interaction surfaces exist:\n- **REST API** (`/api/*`) — standard request/response, good for testing and management operations.\n- **WebSocket** (`/ws/assistant/:device_id`) — persistent connection with real-time event streaming per turn. This is the primary surface the Flutter app uses.\n\n## WebSocket Event Protocol\nConnect to `ws://host/ws/assistant/:device_id`, then send and receive JSON frames.\n\n### Client → Server\n```json\n{ \"message\": \"Gimana kondisi hidroponik?\" }\n{ \"action\": \"clear_history\" }\n{ \"action\": \"ping\" }\n```\n\n### Server → Client (streamed per turn)\n| Event | When |\n|---|---|\n| `assistant_thinking` | LLM call started (orb pulse) |\n| `tool_called` | A tool is executing |\n| `tool_result` | Tool finished, result available |\n| `assistant_reply` | Final text reply from model |\n| `done` | Turn fully complete, includes `tools_used` |\n| `error` | Something went wrong |\n| `history_cleared` | Session history was reset |\n\n```json\n{ \"event\": \"assistant_thinking\" }\n{ \"event\": \"tool_called\", \"tool\": \"ehydrotel_get_status\" }\n{ \"event\": \"tool_result\", \"tool\": \"ehydrotel_get_status\", \"data\": { \"ph\": 6.3, \"ppm\": 920, \"water_temp\": 24 } }\n{ \"event\": \"assistant_reply\", \"message\": \"Kondisi hidroponik normal...\" }\n{ \"event\": \"done\", \"data\": { \"tools_used\": [\"ehydrotel_get_status\"] } }\n```\n\n## Standard Response Envelope\nAll REST endpoints return:\n```json\n{ \"status\": \"200\", \"message\": \"...\", \"data\": { ... } }\n```",
-    "version": "0.4.0",
+    "description": "Backend orchestrator for the LeviathanBolu personal AI assistant.\n\n## Architecture\nTwo interaction surfaces exist:\n- **REST API** (`/api/*`) — standard request/response, good for testing and management operations.\n- **WebSocket** (`/ws/assistant/:device_id`) — persistent connection with real-time event streaming per turn. This is the primary surface the Flutter app uses.\n\n## WebSocket Session Lifecycle\nEvery WebSocket connection automatically creates a **DeviceSession** record in PostgreSQL that tracks its lifetime:\n1. **Connect** → `CreateSession(deviceID)` is called. The returned `session_id` (UUID) doubles as the `conversation_id` forwarded to STT/TTS Python workers.\n2. **Ping** → `UpdatePing(sessionID)` updates `last_ping_at` so the server can detect stale connections.\n3. **Disconnect** → `CloseSession(sessionID)` sets `ended_at` and stores a `disconnect_reason` (raw error string, truncated to 200 chars).\n\n## WebSocket Frame Protocol\n### Client → Server (text frames, JSON)\n| Field | Type | Description |\n|---|---|---|\n| `message` | string | Chat text to send |\n| `personality` | string | `\"bolu\"` \\| `\"leviathan\"` — overrides active personality for this turn |\n| `action` | string | `\"clear_history\"` \\| `\"ping\"` \\| `\"audio_start\"` \\| `\"audio_end\"` |\n| `purpose` | string | Required with `audio_start`: `\"wake_check\"` \\| `\"conversation\"` |\n\n### Client → Server (binary frames)\nOpus-encoded audio packets streamed between `audio_start` and `audio_end`.\n\n### Server → Client (text frames, JSON)\n| Event | When |\n|---|---|\n| `assistant_thinking` | LLM call started |\n| `tool_called` | A tool is executing |\n| `tool_result` | Tool finished, result available |\n| `assistant_reply` | Final text reply from model |\n| `done` | Turn complete, includes `updated_history` + `tools_used` |\n| `error` | Something went wrong |\n| `history_cleared` | History was reset |\n| `wake_result` | Wake-word check result (`matched`, `personality`) |\n| `final_transcript` | STT transcription of the voice turn |\n| `tts_start` | TTS synthesis starting |\n| `tts_chunk` | Base64-encoded Opus audio packet (`seq`, `audio`) |\n| `tts_end` | TTS synthesis complete |\n\n## Standard Response Envelope\nAll REST endpoints return:\n```json\n{ \"status\": \"200\", \"message\": \"...\", \"data\": { ... } }\n```",
+    "version": "0.5.0",
     "contact": {
       "name": "krisnaganesha1609",
       "url": "https://github.com/krisnaganesha1609/LeviathanBolu-BE"
@@ -105,22 +105,26 @@
           "Assistant"
         ],
         "summary": "WebSocket — real-time assistant stream",
-        "description": "**Upgrade this connection to WebSocket** (`ws://` or `wss://`).\n\nOne persistent connection per device. The client sends chat messages and receives a stream of events for each turn. Conversation history is automatically stored in Redis (TTL configurable via `SESSION_TTL_HOURS`) and replayed on reconnect.\n\n### Client frames\n| Field | Type | Description |\n|---|---|---|\n| `message` | string | Chat text to send to the assistant |\n| `action` | string | `clear_history` \\| `ping` |\n\n### Server event frames\nSee the top-level description for the full event reference.\n\n### Keep-alive\nSend `{\"action\": \"ping\"}` every ~30s to prevent the 5-minute idle timeout from closing the connection.",
+        "description": "**Upgrade this connection to WebSocket** (`ws://` or `wss://`).\n\nOne persistent connection per device. On connect, a **DeviceSession** row is created in PostgreSQL (`started_at` set, `session_id` becomes the `conversation_id` forwarded to STT/TTS workers). On disconnect, `ended_at` and `disconnect_reason` are written.\n\n### Session & keep-alive\n- Send `{\"action\": \"ping\"}` every ~30s — this updates `last_ping_at` in the DeviceSession and resets the 5-minute idle read deadline.\n- Conversation history is stored in Redis (TTL via `SESSION_TTL_HOURS`) and replayed on reconnect.\n\n### Voice flow\n1. `{\"action\": \"audio_start\", \"purpose\": \"wake_check\"}` — begin buffering binary Opus frames for wake-word detection.\n2. Binary frames — Opus packets from the microphone.\n3. `{\"action\": \"audio_end\"}` — flush buffer to STT worker; server responds with `wake_result`.\n4. Repeat with `purpose: \"conversation\"` for a full voice turn (→ `final_transcript`, then `tts_chunk` stream).\n\n### Error frames\nIf `device_id` is not a valid UUID the connection is rejected immediately with an `error` event before upgrade completes.",
         "parameters": [
           {
             "name": "device_id",
             "in": "path",
             "required": true,
-            "description": "Unique device identifier. Determines which Redis session (conversation history) is loaded. Use the same ID as the registered Device.ID for consistency.",
+            "description": "UUID of the registered Device. Must match an existing Device.ID row. Used to look up wake words and create the DeviceSession.",
             "schema": {
               "type": "string",
+              "format": "uuid",
               "example": "550e8400-e29b-41d4-a716-446655440000"
             }
           }
         ],
         "responses": {
           "101": {
-            "description": "WebSocket upgrade successful — streaming begins"
+            "description": "WebSocket upgrade successful — DeviceSession created, streaming begins"
+          },
+          "400": {
+            "description": "device_id is not a valid UUID — connection rejected"
           },
           "426": {
             "description": "Upgrade required — must be a WebSocket request"
@@ -924,6 +928,42 @@
           },
           "theme": {
             "type": "string"
+          }
+        }
+      },
+      "DeviceSession": {
+        "type": "object",
+        "description": "Represents one WebSocket connection lifetime. Created on WS connect, closed on disconnect. The session ID doubles as the conversation_id forwarded to STT/TTS Python workers.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Primary key. Also used as conversation_id in STT/TTS worker URL query params."
+          },
+          "device_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "FK → devices.id"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the WebSocket connection was established"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the connection was closed. Zero value means session is still active."
+          },
+          "last_ping_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Updated on every {\"action\": \"ping\"} frame received from the client"
+          },
+          "disconnect_reason": {
+            "type": "string",
+            "description": "Raw WebSocket/OS error string that caused the disconnect, truncated to 200 characters",
+            "example": "websocket: close 1001 (going away)"
           }
         }
       }

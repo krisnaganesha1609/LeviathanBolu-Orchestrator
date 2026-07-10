@@ -1,23 +1,47 @@
-FROM golang:1.25-alpine AS builder
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1 — builder
+#
+# Pakai debian-based golang image (bukan alpine) karena CGO butuh glibc +
+# libopus yang tersedia via apt. Alpine pakai musl libc dan pkg opus-nya
+# lebih ribet — lebih aman pakai bookworm-slim.
+# ─────────────────────────────────────────────────────────────────────────────
+FROM golang:1.25-bookworm AS builder
 
 WORKDIR /app
 
-COPY go.mod go.sum ./
+# Install libopus dev headers dulu — dibutuhkan gopkg.in/hraban/opus.v2 (CGO).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libopus-dev \
+    libopusfile-dev \
+    && rm -rf /var/lib/apt/lists/*
 
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-# CGO_ENABLED=0 keeps the binary statically linked so it runs unmodified
-# on the minimal alpine runtime image below.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o leviathan ./cmd
+# CGO_ENABLED=1 wajib untuk opus. Binary akan dynamically linked ke libopus
+# (ditangani di runtime stage di bawah).
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o leviathan ./cmd
 
-FROM alpine:latest
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2 — runtime
+#
+# Pakai debian-slim (bukan alpine) agar shared library libopus.so tersedia
+# dan ABI-nya cocok dengan binary yang dikompilasi di stage builder.
+# ─────────────────────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
 
-# ca-certificates: needed for any outbound TLS calls (LLM provider APIs).
-# wget: used by the HEALTHCHECK below to hit /livez.
-RUN apk --no-cache add ca-certificates wget \
-    && addgroup -S leviathan && adduser -S leviathan -G leviathan
+# ca-certificates : TLS calls ke LLM provider (Gemini/OpenRouter).
+# wget            : dipakai HEALTHCHECK di bawah.
+# libopus0        : shared library runtime untuk gopkg.in/hraban/opus.v2.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    wget \
+    libopus0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r leviathan && useradd -r -g leviathan leviathan
 
 WORKDIR /home/leviathan
 
@@ -34,6 +58,6 @@ USER leviathan
 EXPOSE 8009
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:8009/livez || exit 1
+    CMD wget -qO- https://orchestrator.leviathanbolu.my.id/livez || exit 1
 
 CMD ["./leviathan"]
