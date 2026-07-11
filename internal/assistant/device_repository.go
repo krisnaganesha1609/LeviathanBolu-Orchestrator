@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/krisnaganesha1609/LeviathanBolu-BE/pkg/domain"
 	"gorm.io/gorm"
 )
@@ -25,7 +24,7 @@ func NewDeviceWakeWordProvider(db *gorm.DB) *DeviceWakeWordProvider {
 }
 
 func (p *DeviceWakeWordProvider) GetWakeWords(ctx context.Context, deviceID string) (map[string]Personality, error) {
-	var userID uuid.UUID
+	var userID string
 	if err := p.db.WithContext(ctx).
 		Table("devices").
 		Select("user_id").
@@ -33,7 +32,7 @@ func (p *DeviceWakeWordProvider) GetWakeWords(ctx context.Context, deviceID stri
 		Scan(&userID).Error; err != nil {
 		return nil, fmt.Errorf("lookup device %q: %w", deviceID, err)
 	}
-	if userID == uuid.Nil {
+	if userID == "" {
 		return nil, fmt.Errorf("device %q belum terdaftar", deviceID)
 	}
 
