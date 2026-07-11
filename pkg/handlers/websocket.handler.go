@@ -223,6 +223,8 @@ func (h *WSHandler) handleWakeCheck(ctx context.Context, conn *websocket.Conn, d
 		return
 	}
 
+	log.Printf("[ws] device %q: wake check result matched=%v text-based-match", deviceID, matched)
+
 	_ = conn.WriteJSON(assistant.Event{
 		Event:       assistant.EventWakeResult,
 		Matched:     matched,

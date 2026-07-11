@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
@@ -50,6 +51,7 @@ func (c *WakeWordChecker) Check(ctx context.Context, deviceID string, opusFrames
 		return false, "", fmt.Errorf("wake check transcribe: %w", err)
 	}
 	text = strings.ToLower(strings.TrimSpace(text))
+	log.Printf("[wake-check] device %q transcript=%q", deviceID, text)
 	if text == "" {
 		return false, "", nil
 	}
